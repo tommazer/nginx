@@ -655,6 +655,69 @@ ngx_mail_proxy_smtp_handler(ngx_event_t *rev)
         break;
 
     case ngx_smtp_helo:
+        ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0, 
+					   "mail proxy send auth login");
+
+        s->connection->log->action = "sending AUTH LOGIN to upstream";
+
+        line.len = sizeof("AUTH LOGIN\r\n") - 1;
+        line.data = ngx_pnalloc(c->pool, line.len);
+        if (line.data == NULL) {
+            ngx_mail_proxy_internal_server_error(s);
+            return;
+        }
+
+        p = ngx_cpymem(line.data, "AUTH LOGIN\r\n", 
+					   sizeof("AUTH LOGIN\r\n") - 1);
+        *p++ = CR; *p = LF;
+
+        s->mail_state = ngx_smtp_auth_login;
+        break;
+
+
+	case ngx_smtp_auth_login:	
+	    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0, 
+					   "mail proxy send username");
+
+	    s->connection->log->action = "sending username to upstream";
+	
+		line.len = ngx_base64_encoded_length(s->login.len) + 2;
+		line.data = ngx_pnalloc(c->pool, line.len);
+        if (line.data == NULL) {
+            ngx_mail_proxy_internal_server_error(s);
+            return;
+        }
+	
+		ngx_encode_base64(&line, &s->login);
+		line.data[line.len++] = CR;
+		line.data[line.len++] = LF;
+
+		s->mail_state = ngx_smtp_user;
+	
+		break;
+
+	case ngx_smtp_user:
+	    ngx_log_debug0(NGX_LOG_DEBUG_MAIL, rev->log, 0, 
+					   "mail proxy send password");
+
+	    s->connection->log->action = "sending password to upstream";
+
+	    line.len = ngx_base64_encoded_length(s->passwd.len) + 2;
+	    line.data = ngx_pnalloc(c->pool, line.len);
+	    if (line.data == NULL) {
+	        ngx_mail_proxy_internal_server_error(s);
+	        return;
+	    }
+	
+		ngx_encode_base64(&line, &s->passwd);
+		line.data[line.len++] = CR;
+		line.data[line.len++] = LF;
+
+        s->mail_state = ngx_smtp_passwd; 
+
+		break;
+
+	case ngx_smtp_passwd:
     case ngx_smtp_xclient:
     case ngx_smtp_to:
 
@@ -834,7 +897,25 @@ ngx_mail_proxy_read_response(ngx_mail_session_t *s, ngx_uint_t state)
             }
             break;
 
-        case ngx_smtp_helo:
+		case ngx_smtp_auth_login:
+	        if (p[0] == '3' && p[1] == '3' && p[2] == '4') {
+	            return NGX_OK;
+	        }
+	        break;
+			
+		case ngx_smtp_user:
+	        if (p[0] == '3' && p[1] == '3' && p[2] == '4') {
+	            return NGX_OK;
+	        }
+	        break;
+			
+		case ngx_smtp_passwd:
+	        if (p[0] == '2' && p[1] == '3' && p[2] == '5') {
+	            return NGX_OK; 
+	        }
+	        break;
+			 
+		case ngx_smtp_helo:
         case ngx_smtp_helo_xclient:
         case ngx_smtp_helo_from:
         case ngx_smtp_from:
